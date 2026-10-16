@@ -103,6 +103,7 @@ The app is exposed as a factory rather than a module-level object, so importing 
 | `GET /` | Service identity and version |
 | `GET /health` | Liveness — process is up. Checks no dependencies, so an outage never causes a restart loop |
 | `GET /ready` | Readiness — `200` when Postgres and Redis are reachable, `503` otherwise |
+| `POST /v1/tickets` | Submit a ticket. `201` when created, `200` when the `external_ref` was already seen |
 | `GET /docs` | OpenAPI UI (disabled when `APP_ENV=production`) |
 
 Every request carries a correlation ID. Send `X-Request-ID` to join an existing
