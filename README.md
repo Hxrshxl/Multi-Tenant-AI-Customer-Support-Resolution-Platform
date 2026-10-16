@@ -89,7 +89,7 @@ Both should pass. If `app.cli check` fails, the stack is probably not up yet.
 Useful for development with auto-reload, instead of the container:
 
 ```bash
-uvicorn app.main:create_app --factory --reload
+python -m app
 ```
 
 The app is exposed as a factory rather than a module-level object, so importing it has no side effects and configuration is read at startup rather than at import.
@@ -123,7 +123,9 @@ quote `requestId`:
 | `python scripts/check.py` | Lint, format check, type check and tests |
 | `python scripts/check.py --fix` | Auto-fix lint and formatting first |
 | `python -m app.cli check` | Verify Postgres, pgvector and Redis connectivity |
-| `python -m app.cli seed` | Load sample tenants and tickets *(no-op until the schema lands)* |
+| `alembic upgrade head` | Apply database migrations |
+| `alembic downgrade base` | Roll every migration back |
+| `python -m app.cli seed` | Load two sample tenants with customers and tickets (idempotent) |
 | `docker compose up -d` | Start the local stack |
 | `docker compose down -v` | Stop and remove volumes (wipes local data) |
 
