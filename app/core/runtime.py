@@ -31,15 +31,18 @@ def configure_event_loop_policy() -> None:
     if sys.platform != "win32":
         return
 
-    selector_policy = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
-    if selector_policy is None:  # pragma: no cover - non-Windows guard
-        return
-
-    # Event loop policies are deprecated from Python 3.14 onward, but remain
-    # the only way to influence a loop that someone else (uvicorn) creates.
-    # When a supported replacement exists, this is the thing to revisit.
+    # Event loop policies are deprecated from Python 3.14 and scheduled for
+    # removal in 3.16, but they remain the only way to influence a loop that
+    # someone else (uvicorn, pytest) creates. Merely reading the attribute
+    # emits the warning, so the whole block is suppressed.
+    #
+    # This has a deadline: when 3.16 removes it, the options are asyncpg or
+    # running the app only inside the Linux container. See ADR-005.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
+        selector_policy = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
+        if selector_policy is None:  # pragma: no cover - non-Windows guard
+            return
         asyncio.set_event_loop_policy(selector_policy())
 
     logger.debug("selector event loop policy applied for psycopg compatibility")

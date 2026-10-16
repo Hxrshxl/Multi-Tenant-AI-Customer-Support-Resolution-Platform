@@ -96,10 +96,17 @@ which is precisely when you want a probe to be trustworthy.
   Windows development again. It carries a comment pointing here.
 - No asyncio subprocesses on Windows. Currently unused; a real constraint if
   that changes.
-- The policy must be set before the loop is created. Running the app through a
-  path that bypasses our entry point — a bare `uvicorn app.main:create_app` in
-  someone's IDE — will miss it and reproduce the original error. Documented in
-  the README.
+- The policy must be set before the loop is created, so **every process entry
+  point must apply it**. This prediction was confirmed immediately: KAN-17's
+  integration tests failed with the original Proactor error because pytest
+  creates its own loop and nothing called the helper. There are now three entry
+  points applying it — `app/__main__.py`, the `seed` CLI command, and
+  `tests/conftest.py` — and a fourth will be needed for the Celery worker in
+  E12. A bare `uvicorn app.main:create_app` still reproduces the error.
+- **This has a deadline.** Python 3.14 deprecates event loop policies and 3.16
+  removes them. When that lands, the choices narrow to option C (asyncpg) or
+  option B (run only inside the Linux container). Worth revisiting before it
+  becomes forced rather than chosen.
 - Two mechanisms now touch the database: async for application queries, sync
   on a thread for the probe. Slightly more surface, justified by probe
   independence.

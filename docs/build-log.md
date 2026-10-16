@@ -258,6 +258,174 @@ Fixed by using a different, platform-neutral approach for the check.
 
 ---
 
+## KAN-16 — Writing down the decisions we cannot easily undo
+
+> **In one sentence:** we recorded the five decisions that would be painful to
+> reverse, including what each one costs us.
+
+### What we built
+
+Five short documents. Each records a decision, the alternatives genuinely
+considered, which was chosen, and — the part most teams skip — **what the
+choice costs**.
+
+A decision record with no downsides listed is not a decision record. It is
+marketing. Every one of these names a real price we are paying.
+
+The five:
+
+1. **How tenants are kept apart.** One shared database where the *database
+   itself* refuses to return another company's rows, rather than trusting
+   every query to filter correctly.
+2. **What is allowed to decide that a refund happens.** The AI proposes;
+   ordinary, testable code decides. Never the AI alone.
+3. **How a half-finished ticket survives a crash** without refunding anyone
+   twice.
+4. **Where data lives.** One database for both ordinary records and the
+   search-by-meaning index, rather than two systems.
+5. **Which database driver**, after a Windows-only incompatibility bit us in
+   the previous card.
+
+### Why it matters commercially
+
+**Decisions get re-argued when nobody wrote down why.** Six months from now
+someone — possibly you — asks "why aren't we using a proper vector database?"
+Without a record that is a week of re-investigation. With one it is a
+two-minute read and a decision about whether the reasoning still holds.
+
+**The project brief asked for exactly this.** It says: *be ready to explain
+tradeoffs — why a workflow here instead of a free agent, why this chunking
+strategy, what failed and how you fixed it. Interviewers care more about that
+than the stack.* These documents are that preparation, written while the
+reasoning is fresh rather than reconstructed under pressure.
+
+**On a client site this is the artefact that builds trust.** Anyone can show
+working software. Handing over a document that says "we chose this, here are
+the two options we rejected, and here is what it costs you" is the difference
+between a contractor and an engineer they want back.
+
+**It makes disagreement cheap.** If a client's architect disputes a choice, the
+conversation starts from written reasoning instead of from scratch.
+
+### The one worth arguing about
+
+**Decision 4 — one database instead of two.** A dedicated vector database would
+be faster at semantic search. We chose Postgres anyway, and not for
+performance:
+
+> Isolation is the hardest property in this system to get right. One database
+> means implementing it **once**. Two means implementing it twice, in two
+> different systems — two chances to get it wrong.
+
+The cost is real and recorded: there is a performance ceiling we will
+eventually meet, and migrating then is genuine work rather than a config
+change.
+
+### What it cost, honestly
+
+- **No functionality whatsoever.** This card produced five markdown files.
+- Documents go stale. These describe decisions as of today. If one changes and
+  nobody updates the record, it becomes actively misleading — worse than having
+  no record at all.
+
+---
+
+## KAN-15 — The filing system
+
+> **In one sentence:** we built the filing cabinet, and made it physically
+> impossible to file things wrongly.
+
+### What we built
+
+Seven tables: companies, their customers, tickets, the messages in each ticket,
+the outcome of each ticket, every action the agent took, and an append-only
+record of everything that happened.
+
+The tables are the boring part. **The interesting part is that the database now
+refuses to store nonsense.**
+
+### The core idea, in one analogy
+
+There are two ways to stop someone filling in a form incorrectly:
+
+1. Write clear instructions and hope they are followed.
+2. Design the form so the wrong answer physically cannot be written.
+
+Most software does the first. We did the second wherever it was possible. The
+database now rejects:
+
+- A ticket marked "resolved" with no completion time — pedantic-sounding until
+  you realise every "average resolution time" report silently miscounts those
+  rows.
+- The same incoming email creating two tickets.
+- An escalation that does not say why it escalated.
+- A refund amount with no currency attached, or a negative refund.
+- **The same refund being issued twice.**
+
+Each was tested by actually attempting it against a real database, with a valid
+record inserted alongside to prove the rules reject the wrong things rather
+than everything.
+
+### Why it matters commercially
+
+**The duplicate-refund rule is the one with money attached.** The database holds
+a uniqueness guarantee on each action's identity, so when the application's
+retry logic is eventually wrong, the second attempt fails at the database
+rather than reaching the payment provider. That is the difference between a bug
+and a customer refunded twice who keeps both.
+
+**Reports that silently lie are worse than reports that break.** A "resolved"
+ticket with no resolution time crashes nothing. It just quietly makes your
+resolution-rate dashboard wrong — and that is the number you present to a
+client. The constraint makes the row impossible to create.
+
+**The audit record deliberately outlives the ticket.** Delete a ticket and its
+audit entries survive with the link blanked, rather than being deleted too.
+Reconstructing what happened is precisely what you need *after* something has
+been removed.
+
+**Every company's data is addressed from the first row.** The separation column
+is on every table now, per the previous card. Enforcement is not switched on
+yet — but no query exists that cannot be scoped later, which was the entire
+point of doing it early.
+
+### Two more bugs found by running things, not reading them
+
+**Bug 1: six indexes that would have slowed every write for nothing.**
+
+An index makes reading faster and writing slower. My first version indexed the
+company column on every table — but most of those tables already had a
+*combined* index starting with that same column, which the database uses for
+both purposes. Six of seven were pure overhead.
+
+Caught because the migration tool prints every index it is about to create, and
+reading that list made the duplication obvious.
+
+**Bug 2: the migration could not be undone.**
+
+A migration must be reversible — rolling back a bad schema change is the whole
+point. Ours applied fine and rolled back fine, then **failed to apply a second
+time**: the rollback deleted the tables but left behind the custom data types
+they used, so the next attempt hit "this type already exists".
+
+**Why this matters:** a rollback you have never tested is a hope, not a
+rollback. This one looked like it worked. It was broken only in the case of
+rolling back and then going forward again — which is exactly what happens when
+you are fixing a bad deploy under pressure.
+
+### What it cost, honestly
+
+- **Still nothing a customer can see.** Three cards of foundation.
+- **The database does not enforce the *order* of ticket states.** It knows which
+  states exist; it does not know that "resolved" cannot return to "in
+  progress". That ordering lives in application code. Enforcing it in the
+  database would need a trigger — documented rather than hidden.
+- **Isolation is still not switched on.** The column is everywhere; enforcement
+  arrives in epic 9. Today a buggy query could still cross companies. That is a
+  scheduled gap, not an oversight.
+
+---
+
 ## Why there is no user interface yet
 
 A fair question from any stakeholder: two cards in, and there is nothing to
@@ -275,23 +443,22 @@ The interface starts at epic 10 of 12 — roughly two-thirds of the way in.
 
 ---
 
-## What these two cards did *not* deliver
+## What has *not* been delivered yet
 
 Being precise about this matters more than claiming progress.
 
 | Not yet built | Which epic covers it |
 |---|---|
-| Any database tables | E1 (next card, KAN-15) |
 | Reading a company's documentation | E2 |
 | Any AI, or any ticket resolution | E5 |
 | Refunds, order lookups, any real action | E6 |
 | Human approval for risky actions | E8 |
-| Actual separation between companies' data | E9 |
+| Enforced separation between companies' data (the column exists; the enforcement does not) | E9 |
 | Any screen a person can use | E10 |
 
-What they *did* deliver: each of those will be built on a foundation where
-problems are traceable, failures are consistent, credentials do not leak, and
-setup is not a two-day ordeal.
+What the foundation cards *did* deliver: each of those will be built where
+problems are traceable, failures are consistent, credentials do not leak,
+illegal data cannot be stored, and setup is not a two-day ordeal.
 
 ---
 
@@ -307,7 +474,9 @@ If a client asked "what have you done so far?", the honest and useful answer:
 > because that is checked automatically before any code is saved. And the
 > system can tell your infrastructure the difference between "I am starting
 > up" and "I am genuinely broken", which is what stops a brief database blip
-> becoming an outage.
+> becoming an outage. The data model refuses to store contradictory records,
+> so your reports cannot quietly be wrong, and the same refund cannot be
+> issued twice even if our own retry logic has a bug.
 >
 > None of that is visible to an end user. All of it is the reason the visible
 > parts will be safe to ship.
@@ -329,3 +498,6 @@ If a client asked "what have you done so far?", the honest and useful answer:
 | **Redaction** | Automatically blanking out sensitive values before they are written down |
 | **Structured logging** | Writing notes in a machine-readable format so they can be searched and alerted on |
 | **ADR** | Architecture Decision Record: a short note recording a significant decision and the options rejected |
+| **Migration** | A versioned, reversible change to the database's structure |
+| **Constraint** | A rule the database itself enforces, so invalid data cannot be stored at all |
+| **Index** | A lookup structure that makes reading faster and writing slower — worth it only for queries you actually run |

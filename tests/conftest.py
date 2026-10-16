@@ -10,6 +10,12 @@ from __future__ import annotations
 import pytest
 
 from app.config import Settings
+from app.core.runtime import configure_event_loop_policy
+
+# pytest creates the event loop itself, so it is a process entry point like
+# any other and needs the same policy applied (ADR-005). Without this, every
+# database-backed test fails with the Proactor incompatibility on Windows.
+configure_event_loop_policy()
 
 UNREACHABLE_POSTGRES = "postgresql://support:sup3rsecret@127.0.0.1:59999/support"
 UNREACHABLE_REDIS = "redis://127.0.0.1:59998/0"
