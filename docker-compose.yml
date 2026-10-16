@@ -8,7 +8,10 @@ services:
       POSTGRES_PASSWORD: support
       POSTGRES_DB: support
     ports:
-      - "5432:5432"
+      # Published on 5433, not 5432: a native Postgres install on the host
+      # silently wins the port and rejects our credentials, which looks
+      # exactly like a wrong password. Inside the compose network it is 5432.
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       # Enables the vector extension on first initialisation.
