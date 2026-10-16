@@ -164,7 +164,12 @@ Work is tracked as a Jira backlog of 12 epics. Build order is dependency-driven 
 
 A deliberate early decision: `tenant_id` is carried through the schema and request context from the first commit, so multi-tenancy in phase 4 is an enforcement change rather than a retrofit through every query.
 
-The full specification, open decisions and recorded risks live in [`project idea.md`](./project%20idea.md).
+Architecture decisions, the numeric non-functional targets and the risk
+register live in [`docs/adr/`](./docs/adr/README.md). A plain-English
+explanation of each card as it is built — what it does and why it matters
+commercially — is in [`docs/build-log.md`](./docs/build-log.md).
+
+The full specification and open decisions live in [`project idea.md`](./project%20idea.md).
 
 ---
 
