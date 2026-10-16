@@ -1,0 +1,11 @@
+# Direct runtime dependencies, pinned.
+# The full transitive set is locked in requirements.lock.txt.
+# Resolved and verified against Python 3.14.
+
+fastapi==0.143.3
+uvicorn[standard]==0.54.0
+pydantic==2.14.1
+pydantic-settings==2.16.0
+psycopg[binary]==3.3.6
+redis==8.1.0
+typer==0.27.3
