@@ -8,7 +8,10 @@ services:
       POSTGRES_PASSWORD: support
       POSTGRES_DB: support
     ports:
-      - "5432:5432"
+      # Published on 5433, not 5432: a native Postgres install on the host
+      # silently wins the port and rejects our credentials, which looks
+      # exactly like a wrong password. Inside the compose network it is 5432.
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       # Enables the vector extension on first initialisation.
@@ -51,8 +54,9 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      # A real readiness probe that checks dependencies arrives with KAN-14.
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/', timeout=3).status == 200 else 1)"]
+      # /ready, not /health: compose should only report this service healthy
+      # once it can actually reach Postgres and Redis.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ready', timeout=3).status == 200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -89,12 +89,32 @@ Both should pass. If `app.cli check` fails, the stack is probably not up yet.
 Useful for development with auto-reload, instead of the container:
 
 ```bash
-uvicorn app.main:create_app --factory --reload
+python -m app
 ```
 
 The app is exposed as a factory rather than a module-level object, so importing it has no side effects and configuration is read at startup rather than at import.
 
 ---
+
+## HTTP surface
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /` | Service identity and version |
+| `GET /health` | Liveness — process is up. Checks no dependencies, so an outage never causes a restart loop |
+| `GET /ready` | Readiness — `200` when Postgres and Redis are reachable, `503` otherwise |
+| `GET /docs` | OpenAPI UI (disabled when `APP_ENV=production`) |
+
+Every request carries a correlation ID. Send `X-Request-ID` to join an existing
+trace, or one is generated; either way it comes back on the response and appears
+on every log line that request produced.
+
+Every failure returns the same envelope, so clients branch on `code` and humans
+quote `requestId`:
+
+```json
+{"error": {"code": "not_found", "message": "No ticket with that id.", "requestId": "a1b2c3…"}}
+```
 
 ## Commands
 
@@ -103,7 +123,9 @@ The app is exposed as a factory rather than a module-level object, so importing 
 | `python scripts/check.py` | Lint, format check, type check and tests |
 | `python scripts/check.py --fix` | Auto-fix lint and formatting first |
 | `python -m app.cli check` | Verify Postgres, pgvector and Redis connectivity |
-| `python -m app.cli seed` | Load sample tenants and tickets *(no-op until the schema lands)* |
+| `alembic upgrade head` | Apply database migrations |
+| `alembic downgrade base` | Roll every migration back |
+| `python -m app.cli seed` | Load two sample tenants with customers and tickets (idempotent) |
 | `docker compose up -d` | Start the local stack |
 | `docker compose down -v` | Stop and remove volumes (wipes local data) |
 
@@ -144,7 +166,12 @@ Work is tracked as a Jira backlog of 12 epics. Build order is dependency-driven 
 
 A deliberate early decision: `tenant_id` is carried through the schema and request context from the first commit, so multi-tenancy in phase 4 is an enforcement change rather than a retrofit through every query.
 
-The full specification, open decisions and recorded risks live in [`project idea.md`](./project%20idea.md).
+Architecture decisions, the numeric non-functional targets and the risk
+register live in [`docs/adr/`](./docs/adr/README.md). A plain-English
+explanation of each card as it is built — what it does and why it matters
+commercially — is in [`docs/build-log.md`](./docs/build-log.md).
+
+The full specification and open decisions live in [`project idea.md`](./project%20idea.md).
 
 ---
 

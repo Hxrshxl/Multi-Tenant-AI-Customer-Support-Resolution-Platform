@@ -1,33 +1,40 @@
 """Developer command line.
 
+    python -m app.cli --help
+
 ``check``  verifies the local stack is reachable.
 ``seed``   loads sample tenants, customers and tickets.
-
-Run with:  python -m app.cli --help
 """
 
 from __future__ import annotations
 
+import asyncio
 import sys
 
 import psycopg
 import redis
 import typer
 
-from app.config import ConfigurationError, get_settings
+from app.config import ConfigurationError, Settings, get_settings
+from app.core.runtime import configure_event_loop_policy
+from app.db.seed import seed as seed_data
+from app.db.session import create_engine, create_session_factory, session_scope
 
 cli = typer.Typer(add_completion=False, help="Developer tasks for the support platform.")
+
+
+def _settings_or_exit() -> Settings:
+    try:
+        return get_settings()
+    except ConfigurationError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
 
 
 @cli.command()
 def check() -> None:
     """Verify that Postgres and Redis are reachable with the current settings."""
-    try:
-        settings = get_settings()
-    except ConfigurationError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(code=1) from exc
-
+    settings = _settings_or_exit()
     failures: list[str] = []
 
     try:
@@ -61,19 +68,45 @@ def check() -> None:
 
 
 @cli.command()
-def seed() -> None:
-    """Load sample tenants, customers and tickets into the database.
+def seed(
+    tickets: int = typer.Option(50, help="Tickets to create per tenant."),
+    customers: int = typer.Option(8, help="Customers to create per tenant."),
+) -> None:
+    """Load sample tenants, customers and tickets.
 
-    The data model lands with KAN-15, so there are no tables to populate yet.
-    This command verifies connectivity and reports that, rather than failing or
-    pretending to have seeded something.
+    Seeds two tenants deliberately: a single tenant hides isolation bugs,
+    because a query missing its tenant filter still looks correct.
+
+    Safe to re-run; existing data is left alone rather than duplicated.
     """
-    check()
-    typer.echo(
-        "\nNothing seeded: the schema arrives with KAN-15 (core data model).\n"
-        "This command will populate two tenants, sample customers and tickets\n"
-        "across all four intent classes once those tables exist."
-    )
+    settings = _settings_or_exit()
+    configure_event_loop_policy()
+
+    async def _run() -> dict[str, int]:
+        engine = create_engine(settings)
+        factory = create_session_factory(engine)
+        try:
+            async with session_scope(factory) as session:
+                return await seed_data(
+                    session, tickets_per_tenant=tickets, customers_per_tenant=customers
+                )
+        finally:
+            await engine.dispose()
+
+    try:
+        created = asyncio.run(_run())
+    except Exception as exc:
+        typer.echo(f"\nSeeding failed: {exc}", err=True)
+        typer.echo("Has the migration been applied?  alembic upgrade head", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if not any(created.values()):
+        typer.echo("Nothing to do: sample data is already present.")
+        return
+
+    typer.echo("Seeded:")
+    for entity, count in created.items():
+        typer.echo(f"  {entity}: {count}")
 
 
 def main() -> None:
