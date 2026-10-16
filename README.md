@@ -96,6 +96,26 @@ The app is exposed as a factory rather than a module-level object, so importing 
 
 ---
 
+## HTTP surface
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /` | Service identity and version |
+| `GET /health` | Liveness — process is up. Checks no dependencies, so an outage never causes a restart loop |
+| `GET /ready` | Readiness — `200` when Postgres and Redis are reachable, `503` otherwise |
+| `GET /docs` | OpenAPI UI (disabled when `APP_ENV=production`) |
+
+Every request carries a correlation ID. Send `X-Request-ID` to join an existing
+trace, or one is generated; either way it comes back on the response and appears
+on every log line that request produced.
+
+Every failure returns the same envelope, so clients branch on `code` and humans
+quote `requestId`:
+
+```json
+{"error": {"code": "not_found", "message": "No ticket with that id.", "requestId": "a1b2c3…"}}
+```
+
 ## Commands
 
 | Command | What it does |
