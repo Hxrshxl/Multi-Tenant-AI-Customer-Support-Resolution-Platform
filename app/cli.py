@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from pathlib import Path
 
 import psycopg
 import redis
@@ -19,6 +20,8 @@ from app.config import ConfigurationError, Settings, get_settings
 from app.core.runtime import configure_event_loop_policy
 from app.db.seed import seed as seed_data
 from app.db.session import create_engine, create_session_factory, session_scope
+from app.ingestion.pipeline import IngestionReport, ingest_directory
+from app.repositories import tickets as ticket_repo
 
 cli = typer.Typer(add_completion=False, help="Developer tasks for the support platform.")
 
@@ -107,6 +110,72 @@ def seed(
     typer.echo("Seeded:")
     for entity, count in created.items():
         typer.echo(f"  {entity}: {count}")
+
+
+@cli.command()
+def ingest(
+    tenant: str = typer.Option(..., help="Tenant slug to ingest for."),
+    path: Path = typer.Option(
+        Path("knowledge-base"), help="Directory of markdown, HTML or text files."
+    ),
+) -> None:
+    """Load a tenant's knowledge base from a directory of documents.
+
+    Safe to re-run: documents whose content is unchanged are skipped by content
+    hash rather than re-processed. That is what makes the chunking experiments
+    in KAN-19 cheap to iterate on.
+    """
+    settings = _settings_or_exit()
+    configure_event_loop_policy()
+
+    if not path.exists():
+        typer.echo(f"No such directory: {path}", err=True)
+        raise typer.Exit(code=1)
+
+    def _progress(report: IngestionReport) -> None:
+        typer.echo(f"  ...{report.documents_seen} documents processed")
+
+    async def _run() -> IngestionReport:
+        engine = create_engine(settings)
+        factory = create_session_factory(engine)
+        try:
+            async with session_scope(factory) as session:
+                found = await ticket_repo.get_tenant_by_slug(session, tenant)
+            if found is None:
+                raise LookupError(f"Unknown tenant: {tenant}")
+            return await ingest_directory(
+                factory, tenant_id=found.id, root=path, on_progress=_progress
+            )
+        finally:
+            await engine.dispose()
+
+    try:
+        report = asyncio.run(_run())
+    except LookupError as exc:
+        typer.echo(str(exc), err=True)
+        typer.echo("Has the database been seeded?  python -m app.cli seed", err=True)
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        typer.echo(f"Ingestion failed: {exc}", err=True)
+        typer.echo("Has the migration been applied?  alembic upgrade head", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo("")
+    typer.echo(f"  documents seen       {report.documents_seen}")
+    typer.echo(f"  created              {report.documents_created}")
+    typer.echo(f"  updated              {report.documents_updated}")
+    typer.echo(f"  unchanged (skipped)  {report.documents_unchanged}")
+    typer.echo(f"  failed               {report.documents_failed}")
+    typer.echo(f"  chunks written       {report.chunks_written}")
+    if report.chunks_deleted:
+        typer.echo(f"  chunks replaced      {report.chunks_deleted}")
+
+    for source, reason in report.failures:
+        typer.echo(f"  FAILED  {source}: {reason}", err=True)
+
+    if report.documents_failed and report.documents_failed == report.documents_seen:
+        # Every single document failing is a configuration problem, not data.
+        raise typer.Exit(code=1)
 
 
 def main() -> None:

@@ -400,3 +400,94 @@ class AuditEntry(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class SourceFormat(enum.StrEnum):
+    MARKDOWN = "markdown"
+    HTML = "html"
+    TEXT = "text"
+    RESOLVED_TICKET = "resolved_ticket"
+
+
+class Document(Base):
+    """One source document in a tenant's knowledge base.
+
+    Deliberately stores no vector. Embeddings arrive with KAN-20; keeping them
+    out of this card means ingestion can be built, tested and re-run without an
+    embedding provider, API key or cost.
+    """
+
+    __tablename__ = "document"
+    __table_args__ = (
+        # A document is identified by where it came from, within one tenant.
+        # Re-ingesting the same URI updates it rather than creating a twin.
+        UniqueConstraint("tenant_id", "source_uri"),
+        # The idempotency lookup: has this exact content already been ingested?
+        Index("ix_document_tenant_id_content_hash", "tenant_id", "content_hash"),
+        CheckConstraint("byte_size >= 0", name="byte_size_not_negative"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenant.id", ondelete="CASCADE"), nullable=False
+    )
+    source_uri: Mapped[str] = mapped_column(String(1024), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(500))
+    source_format: Mapped[SourceFormat] = mapped_column(
+        _pg_enum(SourceFormat, "source_format"), nullable=False
+    )
+    #: SHA-256 of the raw content, hex encoded. Comparing this is what makes
+    #: re-ingestion a no-op instead of a re-embed, which later is real money.
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    ingested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    chunks: Mapped[list["DocumentChunk"]] = relationship(
+        back_populates="document", cascade="all, delete-orphan"
+    )
+
+
+class DocumentChunk(Base):
+    """A retrievable slice of a document.
+
+    ``ordinal`` is the chunk's position within its document, so a retrieved
+    chunk can be shown with its neighbours and a citation can point at a
+    specific place rather than a whole page.
+    """
+
+    __tablename__ = "document_chunk"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "document_id", "ordinal"),
+        # Retrieval always filters by tenant first; see ADR-001.
+        Index("ix_document_chunk_tenant_id_document_id", "tenant_id", "document_id"),
+        CheckConstraint("ordinal >= 0", name="ordinal_not_negative"),
+        CheckConstraint("char_count > 0", name="chunk_not_empty"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenant.id", ondelete="CASCADE"), nullable=False
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("document.id", ondelete="CASCADE"), nullable=False
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    #: Breadcrumb of the headings this chunk sits under, e.g.
+    #: "Billing > Refunds > Partial refunds". Retained because a chunk stripped
+    #: of its context is often uninterpretable on its own (KAN-19).
+    heading_path: Mapped[str | None] = mapped_column(String(1000))
+    char_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    document: Mapped[Document] = relationship(back_populates="chunks")
