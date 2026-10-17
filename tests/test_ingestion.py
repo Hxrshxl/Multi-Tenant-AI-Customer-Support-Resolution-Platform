@@ -132,3 +132,44 @@ def test_a_short_document_is_one_chunk() -> None:
 
     assert len(chunks) == 1
     assert chunks[0].heading_path == "Title"
+
+
+FENCED = """# Backups
+
+## Restoring
+
+Run the command below.
+
+```bash
+# Restore from a PITR backup (replace the timestamp)
+pg_restore --time 1699999999 mydb
+```
+
+## Afterwards
+
+Verify the restore completed.
+"""
+
+
+def test_shell_comments_in_code_fences_are_not_headings() -> None:
+    """Real documentation is full of '# comment' lines inside bash blocks.
+
+    Treating one as a markdown heading corrupts the breadcrumb of every
+    section after it. Found on real content, not in the hand-written corpus.
+    """
+    chunks = HeadingAwareChunker().split(FENCED)
+
+    paths = [c.heading_path for c in chunks]
+    assert "Backups > Restoring" in paths
+    assert "Backups > Afterwards" in paths
+    # The shell comment must not appear as a heading anywhere in any path.
+    assert not any("Restore from a PITR backup" in (p or "") for p in paths)
+
+
+def test_fenced_code_is_kept_in_the_chunk_body() -> None:
+    """Skipping fences for heading detection must not drop the code itself."""
+    chunks = HeadingAwareChunker().split(FENCED)
+
+    body = "\n".join(c.content for c in chunks)
+    assert "pg_restore --time 1699999999 mydb" in body
+    assert "```bash" in body

@@ -24,6 +24,12 @@ DEFAULT_MAX_CHARS = 1500
 DEFAULT_OVERLAP_CHARS = 200
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
+#: Fenced code blocks. A shell comment inside one looks exactly like a
+#: markdown heading, and real documentation is full of them — "# Restore
+#: from a PITR backup" in a bash example became an H1 and corrupted the
+#: breadcrumb of every section beneath it. Found by reading real output,
+#: not by testing: the hand-written sample corpus had no code fences.
+_FENCE = re.compile(r"^\s*(```|~~~)")
 
 
 @dataclass(frozen=True)
@@ -84,8 +90,15 @@ class HeadingAwareChunker:
         buffer: list[str] = []
         current_path = _heading_path(stack)
 
+        in_fence = False
         for line in content.splitlines():
-            match = _HEADING.match(line.strip())
+            if _FENCE.match(line):
+                in_fence = not in_fence
+                buffer.append(line)
+                continue
+
+            # Inside a fence, a leading '#' is a comment, not a heading.
+            match = None if in_fence else _HEADING.match(line.strip())
             if match is None:
                 buffer.append(line)
                 continue

@@ -13,11 +13,12 @@ Newest entries first. History is never deleted.
 | | |
 |---|---|
 | **Epic 1 (Foundation)** | Complete — all 5 cards merged to `main` |
-| **Epic 2 (Retrieval)** | KAN-18 built. **KAN-19 to 22 are blocked** — see below |
+| **Epic 2 (Retrieval)** | KAN-18 merged (PR #5). KAN-19 to 22 blocked on Epic 3 |
+| **Epic 3 (Evaluation)** | KAN-23 **partially done** — corpus acquired, dataset not authored |
 | **Merged PRs** | #1 (KAN-13), #2 (KAN-14, KAN-16, KAN-15), #3 (KAN-17) |
-| **Current branch** | `kan-18-document-ingestion` (stacked on `chore/dev-workflow`) |
+| **Current branch** | `kan-23-eval-dataset` (off `main`) |
 | **Overall progress** | 6 of 53 stories · ~26 of ~320 points · **~8%** |
-| **Next up** | **Blocked.** Epic 2 cannot continue without two decisions. |
+| **Next up** | Finish KAN-23: author the labelled ticket dataset |
 
 **What runs right now:** `POST /v1/tickets` accepts a ticket, persists it
 against a tenant, passes it through a placeholder resolver, persists a canned
@@ -78,6 +79,57 @@ Epic 2 rather than after it.
 - **KAN-18** (document ingestion) — starts Epic 2, the retrieval path.
 - **KAN-27** (multi-channel intake) — extends what already works.
 
+---
+
+## 2026-10-17 — KAN-23 (part 1) · Real corpus acquired, and a chunker bug fixed
+
+**Decisions taken** (both were the user's to make, and both were asked for):
+
+- **Eval data source: real public product documentation.** Supabase docs,
+  Apache-2.0, pinned to commit `7425d493`. Checked Medusa first and rejected it:
+  MIT *except* Enterprise Edition materials, and that ambiguity is not worth
+  inheriting.
+- **Embeddings: a local model, no API key.** Confirmed by survey that no
+  embedding API key exists on this machine, so KAN-20 was genuinely blocked
+  rather than merely undecided.
+
+**What was done.** `scripts/fetch_corpus.py` fetches the corpus at setup time
+rather than vendoring it — the repository never redistributes third-party
+content, stays small, and pins the upstream *commit* rather than a branch.
+Pinning matters because the dataset labels will reference documents by URI; a
+moving branch would rot the labels silently and drift every retrieval number
+for reasons unrelated to our code.
+
+**Files touched:** `scripts/fetch_corpus.py` (new),
+`app/ingestion/chunking.py`, `tests/test_ingestion.py`, `.gitignore`.
+
+**The bug worth remembering.** Inspecting real heading paths revealed breadcrumbs
+like `Restore from a PITR backup (replace Unix timestamp...)` — not a heading at
+all, but a **shell comment inside a fenced code block**. The heading regex
+matched `#` at the start of any line, including inside fences, so a bash comment
+became an H1 and corrupted the breadcrumb of every section beneath it.
+
+Real documentation is full of commented shell examples. The hand-written sample
+corpus had no code fences, so five documents and sixteen tests never saw it.
+**Reading the real output is what found it**, not the test suite. Fixed, with
+two regression tests; chunk count fell 4,134 to 3,985 as the spurious splits
+disappeared.
+
+**Also found: changing the chunker does not trigger re-chunking.** The content
+hash compares *document content*, which has not changed, so every document is
+skipped. Re-chunking currently requires clearing the documents by hand. KAN-19
+compares chunking strategies and will need a deliberate way to force it.
+
+**Where it stands.** Verified: 310 documents fetched, 0 failures; ingested in 23
+seconds producing 3,985 chunks; mean chunk 626 chars, median 481, p95 1,459,
+100% carrying a heading path. 21% are still under 200 characters, which is a
+measured finding for KAN-19 rather than something to tune by instinct now.
+57 tests pass, strict mypy clean.
+
+**KAN-23 is NOT complete.** Done: data source chosen, provenance and licensing
+recorded, corpus acquired and ingested. Not done: the dataset schema, the
+150-200 labelled tickets, the hard/should-escalate/adversarial quotas, the
+loader and the integrity tests. That is the next piece of work.
 ---
 
 ## 2026-10-17 — KAN-18 · Document ingestion pipeline

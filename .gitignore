@@ -37,3 +37,6 @@ Thumbs.db
 # Local data
 pgdata/
 *.sqlite3
+
+# Third-party corpus, fetched by scripts/fetch_corpus.py rather than vendored.
+knowledge-base/supabase/

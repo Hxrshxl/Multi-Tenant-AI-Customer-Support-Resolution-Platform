@@ -91,6 +91,112 @@ the next one.
 
 ---
 
+## 2026-10-17 — KAN-23 (part 1) · A real corpus, and a chunker bug
+
+### What changed
+
+| File | Purpose |
+|---|---|
+| `scripts/fetch_corpus.py` | Downloads the evaluation knowledge base |
+| `app/ingestion/chunking.py` | **Bug fix** — code fences are no longer read as headings |
+| `.gitignore` | Excludes the fetched corpus |
+
+### Why we fetch instead of committing the documents
+
+Three reasons, and the third is the one people forget:
+
+1. **Licensing.** The documents are someone else's work. Downloading them at
+   setup time means this repository never redistributes them.
+2. **Size.** 310 documents would bloat every clone.
+3. **Reproducibility.** The upstream version is **pinned to a specific commit**,
+   not to a branch.
+
+That third point matters more than it looks. The eval dataset will label tickets
+with "the answer is in *this* document". If the corpus pointed at a moving
+branch, upstream edits would silently invalidate those labels and every
+retrieval score would drift for reasons that have nothing to do with our code.
+
+```bash
+python scripts/fetch_corpus.py                            # 310 documents
+python -m app.cli ingest --tenant acme --path knowledge-base
+```
+
+### The bug: shell comments became headings
+
+This one is worth understanding, because it shows why real data matters.
+
+The chunker finds headings with a rule like "a line starting with `#`". In
+markdown that is a heading:
+
+```markdown
+## Restoring a backup
+```
+
+But documentation is full of **code examples**, and in a shell script `#` starts
+a comment:
+
+````markdown
+```bash
+# Restore from a PITR backup (replace the timestamp)
+pg_restore --time 1699999999 mydb
+```
+````
+
+The chunker read that comment as a top-level heading. Every section after it
+inherited the wrong breadcrumb:
+
+| | |
+|---|---|
+| **Before** | `Restore from a PITR backup (replace Unix timestamp...)` |
+| **After** | `Database Backups > Backup and restore process` |
+
+**Why no test caught it.** The five sample documents I wrote for KAN-18 had no
+code blocks. Sixteen tests passed. The bug appeared the moment real
+documentation arrived — and it was found by *reading the output*, not by running
+anything. Two regression tests now cover it.
+
+**A term worth knowing: a fence.** The ``` markers around a code block are
+called a fence. The fix tracks whether we are inside one and ignores `#` lines
+there.
+
+### Measured on real content
+
+| | 5 sample docs | 310 real docs |
+|---|---|---|
+| Mean chunk size | 153 chars | **626 chars** |
+| Median | — | 481 chars |
+| p95 | — | 1,459 chars |
+| With a heading path | 100% | **100%** |
+| Chunks under 200 chars | — | 21% |
+
+The tiny-chunk problem from KAN-18 largely resolved itself on real content,
+which is the point: the earlier 153-character average was an artefact of my
+sample documents having many short sections. The remaining 21% tail is a real
+finding for KAN-19 — and it stays unfixed on purpose, because KAN-19 exists to
+decide chunking **by measurement**.
+
+### A gap this exposed
+
+**Changing the chunker does not cause documents to be re-chunked.** The content
+hash compares the *document's text*, which has not changed — only our code has.
+So every document is skipped as "unchanged".
+
+Right now, re-chunking means deleting the documents by hand. KAN-19 compares
+chunking strategies, so it will need a deliberate way to force a re-chunk. Noted
+rather than patched, because the right fix is part of that card.
+
+### What is incomplete
+
+**KAN-23 is not finished.** Done: the data source chosen, its provenance and
+licence recorded, the corpus acquired and ingested. Still to do:
+
+- The dataset schema and loader
+- 150–200 labelled tickets with expected answers and source documents
+- The quotas the card requires: 20% hard cases, 10+ that should escalate, 10+
+  adversarial
+- Integrity tests asserting every labelled source actually exists in the corpus
+---
+
 ## 2026-10-17 — KAN-18 · Document ingestion
 
 ### What changed
