@@ -12,11 +12,12 @@ Newest entries first. History is never deleted.
 
 | | |
 |---|---|
-| **Epic 1 (Foundation)** | Complete — all 5 cards built and merged to `main` |
+| **Epic 1 (Foundation)** | Complete — all 5 cards merged to `main` |
+| **Epic 2 (Retrieval)** | KAN-18 built. **KAN-19 to 22 are blocked** — see below |
 | **Merged PRs** | #1 (KAN-13), #2 (KAN-14, KAN-16, KAN-15), #3 (KAN-17) |
-| **Current branch** | `chore/dev-workflow` |
-| **Overall progress** | 5 of 53 stories · ~21 of ~320 points · **~7%** |
-| **Next up** | Not yet chosen. Candidates below. |
+| **Current branch** | `kan-18-document-ingestion` (stacked on `chore/dev-workflow`) |
+| **Overall progress** | 6 of 53 stories · ~26 of ~320 points · **~8%** |
+| **Next up** | **Blocked.** Epic 2 cannot continue without two decisions. |
 
 **What runs right now:** `POST /v1/tickets` accepts a ticket, persists it
 against a tenant, passes it through a placeholder resolver, persists a canned
@@ -41,6 +42,35 @@ isolation enforcement, any user interface.
 5. **One-transaction-per-request will not survive Epic 5.** A transaction must
    not stay open across model calls. Planned shape recorded in `docs/seams.md`.
 
+### Epic 2 is blocked after one card
+
+KAN-19, 20, 21 and 22 form a chain, and the chain is gated on Epic 3, not on
+each other. Their own dependency lines say so:
+
+| Card | Blocked by |
+|---|---|
+| KAN-19 chunking | ingestion **+ the E3 retrieval metrics** |
+| KAN-20 embeddings | chunking |
+| KAN-21 hybrid retrieval | embeddings |
+| KAN-22 query rewriting | hybrid retrieval |
+
+KAN-19, 21 and 22 each require being "measured on the E3 eval set". That set
+does not exist. Choosing a chunking strategy without it means picking a default
+and writing "measured" beside it, which is worse than not doing the card.
+
+**Two decisions are needed to unblock the rest:**
+
+1. **The eval/knowledge-base data source** (open since the project started).
+   This gates KAN-23, which gates KAN-25, which gates KAN-19.
+2. **An embedding provider.** KAN-20 needs real embeddings. Either an API key
+   (costs money, and it would be the user's key) or a local model
+   (`sentence-transformers`, free, large download, slow on CPU). This also
+   fixes the vector dimension, which the schema needs.
+
+**Recommended order:** KAN-23 → KAN-24 → KAN-25 (Epic 3) and then return to
+KAN-19. That is why the backlog made Epic 3 Highest priority and parallel to
+Epic 2 rather than after it.
+
 ### Candidate next cards
 
 - **KAN-23** (golden dataset) — unblocks every measurement. Needs the data
@@ -48,6 +78,63 @@ isolation enforcement, any user interface.
 - **KAN-18** (document ingestion) — starts Epic 2, the retrieval path.
 - **KAN-27** (multi-channel intake) — extends what already works.
 
+---
+
+## 2026-10-17 — KAN-18 · Document ingestion pipeline
+
+**What was done.** Knowledge-base ingestion: loaders for markdown, HTML and
+text; a heading-aware chunker behind a swappable protocol; a pipeline that is
+idempotent, resumable and isolates per-document failures; a CLI command; and a
+five-document sample corpus.
+
+**Files touched:** `app/ingestion/{__init__,loaders,chunking,pipeline}.py`,
+`app/db/models.py` (document, document_chunk, SourceFormat),
+`alembic/versions/20261017_1157_document_and_chunk_tables.py`, `app/cli.py`,
+`knowledge-base/` (5 docs), `tests/test_ingestion.py`,
+`tests/test_ingestion_integration.py`, `tests/__init__.py`, `pyproject.toml`.
+
+**Key decisions.**
+
+- **No embedding column.** Vectors arrive with KAN-20. Keeping them out means
+  ingestion is runnable and testable with no API key and no cost, which matters
+  because KAN-19 will re-run it many times.
+- **One transaction per document, not per run.** This is what makes the
+  pipeline atomic (chunks replaced wholesale), resumable (a run that dies at
+  document 400 keeps 399) and failure-isolating, all at once.
+- **The chunker is deliberately not tuned.** It sits behind a `ChunkStrategy`
+  protocol so KAN-19 compares implementations rather than rewriting the
+  pipeline. Choosing a strategy by taste here would make KAN-19 dishonest.
+
+**Issues hit.**
+
+- The migration left the `source_format` enum behind on downgrade — the **same
+  trap as KAN-15**. Caught this time by checking before applying.
+- Per-document failures logged a full traceback for *expected* problems (an
+  empty file), which is noise in a 500-document run. Split into expected
+  (`ValueError`/`OSError`/`UnicodeDecodeError`, no trace) and unexpected
+  (full trace).
+- Three real lint/type findings fixed properly rather than suppressed: `B008`
+  on Typer defaults (configured `extend-immutable-calls`), `S608` SQL built
+  from a variable in a test (replaced with explicit queries), and a `rowcount`
+  type error (cast to `CursorResult`).
+
+**Where it stands.** Verified against the live stack: first run created 5
+documents and 20 chunks; second run skipped all 5 by content hash and wrote 0
+chunks; changing one document replaced 4 chunks with 5 and left the other 4
+documents untouched; an empty file failed in isolation while the rest landed.
+Migration round-trips. 55 tests pass (16 new), strict mypy clean.
+
+**Two honest findings.**
+
+- **The cost saving from content hashing is negligible** at this scale:
+  ~$0.000016 per avoided re-run, ~$0.03 even at 10,000 documents. The DoD asked
+  for it measured, and measurement says its real value is time and correctness,
+  not money.
+- **Mean chunk size is 153 characters**, which is probably too small for good
+  retrieval — every small heading section becomes its own chunk. Deliberately
+  not tuned; that is KAN-19's job, with numbers.
+
+**Next steps.** Epic 2 is blocked. See the state block above.
 ---
 
 ## 2026-10-17 — Development workflow configured

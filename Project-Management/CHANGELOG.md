@@ -91,6 +91,136 @@ the next one.
 
 ---
 
+## 2026-10-17 — KAN-18 · Document ingestion
+
+### What changed
+
+The knowledge base can now be loaded from a directory of documents.
+
+| File | What it does |
+|---|---|
+| `app/ingestion/loaders.py` | Reads markdown, HTML and text off disk |
+| `app/ingestion/chunking.py` | Splits documents into retrievable pieces |
+| `app/ingestion/pipeline.py` | Runs the whole thing, idempotently |
+| `app/db/models.py` | Two new tables: `document`, `document_chunk` |
+| `knowledge-base/` | Five sample support documents |
+
+### Why
+
+This is the entry point to the whole retrieval path. Nothing can be searched
+until something has been loaded and split up.
+
+### How it works
+
+```bash
+alembic upgrade head                                    # create the new tables
+python -m app.cli ingest --tenant acme --path knowledge-base
+```
+
+Output:
+
+```
+  documents seen       5
+  created              5
+  unchanged (skipped)  0
+  failed               0
+  chunks written       20
+```
+
+**Run it again** and every document is skipped:
+
+```
+  created              0
+  unchanged (skipped)  5
+  chunks written       0
+```
+
+**Why documents get chopped up.** Search works on *pieces*, not whole pages. If
+you store a 50-page manual as one blob, a search for "export error E_4210"
+returns the whole manual, which is useless. Splitting it means the search
+returns the paragraph that actually answers the question. Each piece is a
+**chunk**.
+
+Each chunk keeps a breadcrumb of the headings above it, e.g.
+`Billing > Refunds > Partial refunds`. Without it, a chunk reading "Only part of
+the order is refunded" has lost the context that makes it meaningful.
+
+**How re-running stays cheap.** Every document is stored with a **content
+hash** — a short fingerprint of its text (SHA-256). Change one character and the
+fingerprint changes completely. On each run, the stored fingerprint is compared
+with the file's: identical means skip, different means re-process. This is the
+same idea as a checksum on a download.
+
+**One transaction per document, not per run.** A transaction is a group of
+database writes that all succeed or all fail. Doing one *per document* buys
+three things at once:
+
+- *Atomic replace* — when a document changes, its old chunks are deleted and new
+  ones written together, so a search never sees a half-reindexed document.
+- *Resumable* — a run that dies at document 400 of 500 keeps the first 399. The
+  next run finds them unchanged and skips them, so "resuming" is just running it
+  again.
+- *Failure isolation* — one malformed file rolls back only itself.
+
+A single transaction for the whole run would be simpler and would lose all
+three.
+
+### Verified, not assumed
+
+| Test | Result |
+|---|---|
+| First run | 5 documents, 20 chunks |
+| Second run | 5 skipped, 0 chunks written |
+| One document edited | 1 updated, 4 skipped, 4 chunks replaced by 5 |
+| Empty file added | failed in isolation; the other 5 still processed |
+| Migration round-trip | upgrade → downgrade → upgrade, all clean |
+
+### Two honest findings
+
+**1. The cost saving from hashing is negligible.** The card asked for it
+measured. Measured:
+
+| | |
+|---|---|
+| 21 chunks, 3,206 characters | ~802 tokens |
+| Cost to embed once | ~$0.000016 |
+| Even at 10,000 documents | ~$0.03 per avoided re-run |
+
+So the content hash is **not** a cost optimisation at this scale. Its real value
+is *time* (not re-processing) and *correctness* (not duplicating). Saying so is
+more useful than quoting a saving that rounds to zero.
+
+**2. The chunks are probably too small.** Mean size is 153 characters, because
+the splitter gives every small heading section its own chunk. That is likely
+bad for retrieval — too little context per piece.
+
+**It was deliberately left alone.** KAN-19 exists to compare chunking
+strategies *by measurement*. Tuning it here by instinct would make that card a
+rubber stamp. The chunker therefore sits behind a swappable interface
+(`ChunkStrategy`) so KAN-19 writes new implementations rather than rewriting the
+pipeline.
+
+### Bugs caught during review
+
+- **The migration left a data type behind on rollback** — the same trap as
+  KAN-15. Caught this time *before* applying, by checking the generated
+  downgrade.
+- **Expected failures printed full stack traces.** An empty file is a handled
+  problem; a traceback for it is noise in a 500-document run. Now split:
+  expected problems log a one-line reason, genuine surprises keep the trace.
+- **Three linter findings fixed properly, not silenced.** A SQL query built
+  from a variable in a test was rewritten with explicit queries; the Typer
+  false positive was fixed by configuring the linter rather than scattering
+  `noqa` comments.
+
+### What is incomplete
+
+- **No embeddings.** Chunks are stored as text only. Vectors are KAN-20.
+- **Nothing can be searched yet.** Storing chunks is not retrieval.
+- **The corpus is a 5-document placeholder** written for this card. The real
+  data source is still undecided — and that decision blocks the rest of Epic 2.
+---
+
 ## 2026-10-17 — KAN-17 · The vertical slice (Epic 1 complete)
 
 ### What changed
